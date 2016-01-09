@@ -3,7 +3,7 @@ import argparse
 import hashlib
 import logging
 import os
-import oss2
+import oss2  # pip install oss2
 import re
 
 logging.getLogger("requests").setLevel(logging.WARNING)
@@ -53,8 +53,8 @@ def get_bucket():
     if 'bucket' in _CACHE:
         return _CACHE['bucket']
 
-    api_key = open(os.path.join(ROOT_API_KEY, '.apikey')).read().strip()
-    api_secret = open(os.path.join(ROOT_API_KEY, '.secretkey')).read().strip()
+    api_key = open(os.path.join(ROOT_API_KEY, 'apikey')).read().strip()
+    api_secret = open(os.path.join(ROOT_API_KEY, 'secretkey')).read().strip()
     auth = oss2.Auth(api_key, api_secret)
     bucket = oss2.Bucket(auth, API_URL, BUCKET)
     _CACHE['bucket'] = bucket
