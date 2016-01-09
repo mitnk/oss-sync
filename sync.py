@@ -1,11 +1,10 @@
 #!/usr/bin/python
 import argparse
-import codecs
 import hashlib
 import logging
 import os
-import re
 import oss2
+import re
 
 logging.getLogger("requests").setLevel(logging.WARNING)
 logging.basicConfig(
@@ -41,48 +40,13 @@ def get_file_md5(file_path):
     return hasher.hexdigest()
 
 
-def get_oss_path(local_path, oss_dir):
-    path = local_path
-    if oss_dir != '':
-        path = path[len(oss_dir):]
-    if not isinstance(path, str):
-        path = path.decode('utf-8')
-    path = re.sub('^[\./]*', '', path)
-    return path
-
-
 def sizeof_fmt(num):
+    if num <= 1024:
+        return '1 KB'
     for x in ['bytes','KB','MB','GB','TB']:
         if num < 1024.0:
             return "%3.1f %s" % (num, x)
         num /= 1024.0
-
-
-def is_dir(Key):
-    return Key.ends_with('/')
-
-
-def parse_files(content):
-    files = {}
-    content = xmltodict.parse(content)
-    lbr = content['ListBucketResult']
-    if not lbr.get('Contents'):
-        return files, None, True
-
-    if isinstance(lbr['Contents'], list):
-        objects = lbr['Contents']
-    else:
-        objects = [lbr['Contents']]
-
-    last_key = None
-    for item in objects:
-        k = item['Key']
-        last_key = k
-        v = item['ETag'].replace('"', '').lower()
-        files[k] = v
-
-    finished = lbr['IsTruncated'] == 'false'
-    return files, last_key, finished
 
 
 def get_bucket():
@@ -144,70 +108,66 @@ def get_remote_objects(target_path):
     return objects
 
 
-def upload_file(local_path, oss_path):
-    conn = get_bucket()
-    res = conn.put_object_from_file(BUCKET, oss_path, local_path)
+def upload_file(local_path):
+    bucket = get_bucket()
+    res = bucket.put_object_from_file(local_path, local_path)
     if res.status != 200:
         logging.error('Upload {} failed. Exit.'.format(local_path))
         exit(1)
 
 
-def upload_files_to_oss():
-    logging.info('Uploading/Updating Started')
-    ros = get_remote_objects()
-    ros_md5 = dict((v, k) for k, v in ros.items())
-    logging.info('Total remote objects: {}'.format(len(ros)))
-
-    los = get_local_objects()
-    logging.info('Total local objects: {}'.format(len(los)))
+def upload_files_to_oss(target_path, check_duplicated):
+    logging.info('Uploading/Updating for: {}'.format(target_path))
+    los = get_local_objects(target_path)
+    if check_duplicated:
+        ros = get_remote_objects('')
+    else:
+        ros = get_remote_objects(target_path)
 
     files_need_to_update = []
     files_need_to_upload = []
 
-    for oss_path in los.keys():
-        md5 = los[oss_path]['md5']
-        local_path = los[oss_path]['local_path']
-        if oss_path not in ros and md5 in ros_md5:
-            logging.debug('* An Identical file to exists to {}'.format(oss_path))
-            logging.debug('* - {}'.format(ros_md5[md5]))
+    for local_path in los.keys():
+        md5 = los[local_path]
+        if md5 in ros['etags']:
+            logging.info('* An Identical file to: {}'.format(local_path))
+            logging.info('* @ {}'.format(ros['etags'][md5]))
             continue
 
-        if oss_path not in ros:
+        if local_path not in ros['files']:
             size = sizeof_fmt(os.path.getsize(local_path))
-            files_need_to_upload.append((oss_path, local_path, size))
-        elif ros[oss_path] != md5:
+            files_need_to_upload.append((local_path, size))
+        elif ros['files'][local_path] != md5:
             size = sizeof_fmt(os.path.getsize(local_path))
-            files_need_to_update.append((oss_path, local_path, size))
+            files_need_to_update.append((local_path, size))
 
     files_need_to_update.sort()
     files_need_to_upload.sort()
 
     index = 1
     count = len(files_need_to_update)
-    for oss_path, local_path, size in files_need_to_update:
-        path_utf8 = oss_path.encode('utf-8')
-        print('Do you want to update {}:'.format(path_utf8))
+    for local_path, size in files_need_to_update:
+        print('Do you want to update {}:'.format(local_path))
         response = raw_input()
         while response.lower().strip() not in ('yes', 'no'):
-            print('Do you want to update {}:'.format(path_utf8))
+            print('Do you want to update {}:'.format(local_path))
             response = raw_input()
         if response == 'no':
-            logging.info('skipped {} by user'.format(path_utf8))
+            logging.info('skipped {} by user'.format(local_path))
             continue
-        logging.info('= [{}/{}] Updating old file: {} ({})'.format(index, count, path_utf8, size))
-        upload_file(local_path, oss_path)
+        logging.info('= [{}/{}] Updating old file: {} ({})'.format(index, count, local_path, size))
+        upload_file(local_path)
         index += 1
 
     index = 1
     count = len(files_need_to_upload)
-    for oss_path, local_path, size in files_need_to_upload:
+    for local_path, size in files_need_to_upload:
         try:
             logging.info('+ [{}/{}] Uploading new file: {} ({})'.format(
-                index, count, oss_path.encode('utf-8'), size))
+                index, count, local_path, size))
         except:
-            import pdb; pdb.set_trace()
             pass
-        upload_file(local_path, oss_path)
+        upload_file(local_path)
         index += 1
 
     logging.info('Uploading/Updating Done\n')
@@ -253,7 +213,7 @@ def download_files_from_oss(target_path):
     logging.info('Downloading Done\n')
 
 
-def sync():
+def main():
     parser = argparse.ArgumentParser(description='Use Aliyun-OSS as Dropbox')
     parser.add_argument(
         '--target-path',
@@ -273,17 +233,24 @@ def sync():
     parser.add_argument(
         '--upload',
         '-u',
-        action='store',
-        const=None,
-        default=None,
+        action='store_true',
+        default=False,
         help='Upload files to OSS'
     )
+    parser.add_argument(
+        '--check-duplicated',
+        '-c',
+        action='store_false',
+        default=True,
+        help='Do not upload files already in bucket other dirs'
+    )
     args = parser.parse_args()
+    target_path = args.target_path or ''
     if args.download:
-        download_files_from_oss(args.target_path or '')
+        download_files_from_oss(target_path)
     else:
-        upload_files_to_oss()
+        upload_files_to_oss(target_path, check_duplicated=args.check_duplicated)
 
 
 if __name__ == "__main__":
-    sync()
+    main()
