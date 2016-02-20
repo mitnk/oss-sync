@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/local/bin/py
 import argparse
 import hashlib
 import logging
@@ -74,6 +74,7 @@ def get_local_objects(target_path):
     if os.path.isdir(oss_dir):
         for root, dirs, files in os.walk(oss_dir):
             for f in files:
+                root = re.sub(r'^\./', '', root)
                 local_path = os.path.join(root, f)
                 if is_in_ignore_files(local_path):
                     logging.info('ignored file: {}'.format(local_path))
@@ -116,7 +117,7 @@ def upload_file(local_path):
         exit(1)
 
 
-def upload_files_to_oss(target_path, check_duplicated):
+def upload_files_to_oss(target_path, check_duplicated, no=None, yes=None):
     logging.info('Uploading/Updating for: {}'.format(target_path))
     los = get_local_objects(target_path)
     if check_duplicated:
@@ -130,7 +131,7 @@ def upload_files_to_oss(target_path, check_duplicated):
     for local_path in los.keys():
         md5 = los[local_path]
         if md5 in ros['etags']:
-            logging.info('* An Identical file to: {}'.format(local_path))
+            logging.info('* Identical file found:')
             logging.info('* @ {}'.format(ros['etags'][md5]))
             continue
 
@@ -147,17 +148,24 @@ def upload_files_to_oss(target_path, check_duplicated):
     index = 1
     count = len(files_need_to_update)
     for local_path, size in files_need_to_update:
-        print('Do you want to update {}:'.format(local_path))
-        response = raw_input()
-        while response.lower().strip() not in ('yes', 'no'):
+        if no:
+            break
+        elif yes:
+            upload_file(local_path)
+            index += 1
+        else:
             print('Do you want to update {}:'.format(local_path))
-            response = raw_input()
-        if response == 'no':
-            logging.info('skipped {} by user'.format(local_path))
-            continue
-        logging.info('= [{}/{}] Updating old file: {} ({})'.format(index, count, local_path, size))
-        upload_file(local_path)
-        index += 1
+            response = input()
+            while response.lower().strip() not in ('yes', 'no'):
+                print('Do you want to update {}:'.format(local_path))
+                response = input()
+            if response == 'no':
+                logging.info('skipped {} by user'.format(local_path))
+                continue
+            logging.info('= [{}/{}] Updating old file: {} ({})'.format(
+                index, count, local_path, size))
+            upload_file(local_path)
+            index += 1
 
     index = 1
     count = len(files_need_to_upload)
@@ -221,7 +229,7 @@ def main():
         action='store',
         const=None,
         default=None,
-        help='Download files from OSS'
+        help='Target path to sync files'
     )
     parser.add_argument(
         '--download',
@@ -229,6 +237,18 @@ def main():
         action='store_true',
         default=False,
         help='Download files from OSS'
+    )
+    parser.add_argument(
+        '--yes',
+        action='store_true',
+        default=False,
+        help='overwrite existing files'
+    )
+    parser.add_argument(
+        '--no',
+        action='store_true',
+        default=False,
+        help='Do NOT overwrite existing files'
     )
     parser.add_argument(
         '--upload',
@@ -249,7 +269,12 @@ def main():
     if args.download:
         download_files_from_oss(target_path)
     else:
-        upload_files_to_oss(target_path, check_duplicated=args.check_duplicated)
+        upload_files_to_oss(
+            target_path,
+            check_duplicated=args.check_duplicated,
+            no=args.no,
+            yes=args.yes,
+        )
 
 
 if __name__ == "__main__":
