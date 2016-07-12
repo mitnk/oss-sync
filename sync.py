@@ -14,7 +14,6 @@ logging.basicConfig(
 )
 
 _CACHE = {}
-BUCKET = 'vivid-db'
 ROOT_API_KEY = os.path.join(os.getenv('HOME'), '.aliyun')
 
 # Doc: https://help.aliyun.com/knowledge_detail/5974206.htm
