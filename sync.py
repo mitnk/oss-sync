@@ -119,19 +119,26 @@ def get_local_objects(target_path):
     return objects
 
 
-def get_remote_objects(target_path, args):
-    objects = {'files': {}, 'etags': {}}
+def get_remote_objects(args):
+    objects = {'files': {}, 'etags': {}, 'meta': {}}
     bucket = get_bucket(args)
     marker = None
     file_count = 0
-    prefix = target_path or ''
+    prefix = args.target_path or ''
     while True:
         result = bucket.list_objects(prefix=prefix, max_keys=100, marker=marker)
         for obj in result.object_list:
             if obj.key.endswith('/'):
                 continue
+            if args.min_size and obj.size < args.min_size:
+                continue
+            if args.max_size and obj.size > args.max_size:
+                continue
+            if args.re and not re.search(args.re, obj.key):
+                continue
             objects['files'][obj.key] = obj.etag
             objects['etags'][obj.etag] = obj.key
+            objects['meta'][obj.key] = obj
             file_count += 1
         marker = result.next_marker
         if not result.is_truncated:
@@ -152,9 +159,9 @@ def upload_files_to_oss(target_path, check_duplicated, args, no=None, yes=None):
     logging.info('Uploading/Updating for: {}'.format(target_path))
     los = get_local_objects(target_path)
     if check_duplicated:
-        ros = get_remote_objects('', args)
+        ros = get_remote_objects(args)
     else:
-        ros = get_remote_objects(target_path, args)
+        ros = get_remote_objects(args)
 
     files_need_to_update = []
     files_need_to_upload = []
@@ -229,6 +236,14 @@ def download_file(oss_path, local_path, args):
         exit(1)
 
 
+def list_files_on_oss(args):
+    files = get_remote_objects(args)
+    for o in files['meta']:
+        print('\n- file: {}'.format(o))
+        print('- size: {}'.format(sizeof_fmt(files['meta'][o].size)))
+        print('- md5: {}'.format(files['meta'][o].etag))
+
+
 def download_files_from_oss(target_path, args):
     if target_path.startswith('/'):
         raise ValueError('Must use relative path')
@@ -237,7 +252,7 @@ def download_files_from_oss(target_path, args):
     oss_dir = os.path.join(oss_dir, '.')
     logging.info('Downloading file from: {}'.format(target_path))
     los = get_local_objects(target_path)
-    ros = get_remote_objects(target_path, args)
+    ros = get_remote_objects(args)
     target_files = []
     for obj_key in ros['files']:
         if obj_key in los and ros['files'][obj_key] == los[obj_key]:
@@ -289,6 +304,31 @@ def main():
         help='Upload files to OSS'
     )
     parser.add_argument(
+        '--listing',
+        '-L',
+        action='store_true',
+        default=False,
+        help='List files meta info on OSS'
+    )
+    parser.add_argument(
+        '--min-size',
+        type=int,
+        default=0,
+        help='[Listing] do not list size smaller than this'
+    )
+    parser.add_argument(
+        '--max-size',
+        type=int,
+        default=0,
+        help='[Listing] do not list size bigger than this'
+    )
+    parser.add_argument(
+        '--re',
+        type=str,
+        default='',
+        help='[Listing] filter file name by RE string'
+    )
+    parser.add_argument(
         '--check-duplicated',
         '-c',
         action='store_false',
@@ -303,7 +343,9 @@ def main():
     )
     args = parser.parse_args()
     target_path = args.target_path or ''
-    if args.download:
+    if args.listing:
+        list_files_on_oss(args)
+    elif args.download:
         download_files_from_oss(target_path, args)
     else:
         upload_files_to_oss(
