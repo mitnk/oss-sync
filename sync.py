@@ -16,7 +16,36 @@ logging.basicConfig(
 _CACHE = {}
 BUCKET = 'vivid-db'
 ROOT_API_KEY = os.path.join(os.getenv('HOME'), '.aliyun')
-API_URL = 'oss-cn-hangzhou.aliyuncs.com'
+
+# Doc: https://help.aliyun.com/knowledge_detail/5974206.htm
+# 青岛节点外网地址： oss-cn-qingdao.aliyuncs.com
+# 青岛节点内网地址： oss-cn-qingdao-internal.aliyuncs.com
+#
+# 北京节点外网地址：oss-cn-beijing.aliyuncs.com
+# 北京节点内网地址：oss-cn-beijing-internal.aliyuncs.com
+#
+# 杭州节点外网地址： oss-cn-hangzhou.aliyuncs.com
+# 杭州节点内网地址： oss-cn-hangzhou-internal.aliyuncs.com
+#
+# 上海节点外网地址： oss-cn-shanghai.aliyuncs.com
+# 上海节点内网地址： oss-cn-shanghai-internal.aliyuncs.com
+#
+# 香港节点外网地址： oss-cn-hongkong.aliyuncs.com
+# 香港节点内网地址： oss-cn-hongkong-internal.aliyuncs.com
+#
+# 深圳节点外网地址： oss-cn-shenzhen.aliyuncs.com
+# 深圳节点内网地址： oss-cn-shenzhen-internal.aliyuncs.com
+#
+# 美国节点外网地址： oss-us-west-1.aliyuncs.com
+# 美国节点内网地址：  oss-us-west-1-internal.aliyuncs.com
+#
+# 新加坡节点外网地址： oss-ap-southeast-1.aliyuncs.com
+# 新加坡节点内网地址：  oss-ap-southeast-1-internal.aliyuncs.com
+#
+# 原地址oss.aliyuncs.com 默认指向杭州节点外网地址。
+# 原内网地址oss-internal.aliyuncs.com 默认指向杭州节点内网地址
+API_URL = 'oss-cn-beijing.aliyuncs.com'
+
 IGNORE_FILES = (
     '\/\..*$',
     '\.pyc$',
@@ -43,22 +72,23 @@ def get_file_md5(file_path):
 def sizeof_fmt(num):
     if num <= 1024:
         return '1 KB'
-    for x in ['bytes','KB','MB','GB','TB']:
+    for x in ['bytes', 'KB', 'MB', 'GB', 'TB']:
         if num < 1024.0:
             return "%3.1f %s" % (num, x)
         num /= 1024.0
 
 
-def get_bucket():
+def get_bucket(args):
     if 'bucket' in _CACHE:
         return _CACHE['bucket']
 
     api_key = open(os.path.join(ROOT_API_KEY, 'apikey')).read().strip()
     api_secret = open(os.path.join(ROOT_API_KEY, 'secretkey')).read().strip()
     auth = oss2.Auth(api_key, api_secret)
-    bucket = oss2.Bucket(auth, API_URL, BUCKET)
+    bucket = oss2.Bucket(auth, API_URL, args.bucket)
     _CACHE['bucket'] = bucket
     return bucket
+
 
 def get_local_objects(target_path):
     objects = {}
@@ -88,9 +118,10 @@ def get_local_objects(target_path):
     logging.info('local files: {}'.format(file_count))
     return objects
 
-def get_remote_objects(target_path):
+
+def get_remote_objects(target_path, args):
     objects = {'files': {}, 'etags': {}}
-    bucket = get_bucket()
+    bucket = get_bucket(args)
     marker = None
     file_count = 0
     prefix = target_path or ''
@@ -109,21 +140,21 @@ def get_remote_objects(target_path):
     return objects
 
 
-def upload_file(local_path):
-    bucket = get_bucket()
+def upload_file(local_path, args):
+    bucket = get_bucket(args)
     res = bucket.put_object_from_file(local_path, local_path)
     if res.status != 200:
         logging.error('Upload {} failed. Exit.'.format(local_path))
         exit(1)
 
 
-def upload_files_to_oss(target_path, check_duplicated, no=None, yes=None):
+def upload_files_to_oss(target_path, check_duplicated, args, no=None, yes=None):
     logging.info('Uploading/Updating for: {}'.format(target_path))
     los = get_local_objects(target_path)
     if check_duplicated:
-        ros = get_remote_objects('')
+        ros = get_remote_objects('', args)
     else:
-        ros = get_remote_objects(target_path)
+        ros = get_remote_objects(target_path, args)
 
     files_need_to_update = []
     files_need_to_upload = []
@@ -151,7 +182,7 @@ def upload_files_to_oss(target_path, check_duplicated, no=None, yes=None):
         if no:
             break
         elif yes:
-            upload_file(local_path)
+            upload_file(local_path, args)
             index += 1
         else:
             print('Do you want to update {}:'.format(local_path))
@@ -164,7 +195,7 @@ def upload_files_to_oss(target_path, check_duplicated, no=None, yes=None):
                 continue
             logging.info('= [{}/{}] Updating old file: {} ({})'.format(
                 index, count, local_path, size))
-            upload_file(local_path)
+            upload_file(local_path, args)
             index += 1
 
     index = 1
@@ -175,7 +206,7 @@ def upload_files_to_oss(target_path, check_duplicated, no=None, yes=None):
                 index, count, local_path, size))
         except:
             pass
-        upload_file(local_path)
+        upload_file(local_path, args)
         index += 1
 
     logging.info('Uploading/Updating Done\n')
@@ -185,12 +216,12 @@ def _get_dir_of_file(f):
     return '/'.join(f.split('/')[:-1])
 
 
-def download_file(oss_path, local_path):
+def download_file(oss_path, local_path, args):
     dir_ = _get_dir_of_file(local_path)
     if not os.path.exists(dir_):
         os.makedirs(dir_)
     logging.info('+ Downloading {}'.format(oss_path))
-    bucket = get_bucket()
+    bucket = get_bucket(args)
     local_path = local_path.encode('utf-8')
     res = bucket.get_object_to_file(oss_path, local_path)
     if res.status != 200:
@@ -198,7 +229,7 @@ def download_file(oss_path, local_path):
         exit(1)
 
 
-def download_files_from_oss(target_path):
+def download_files_from_oss(target_path, args):
     if target_path.startswith('/'):
         raise ValueError('Must use relative path')
 
@@ -206,7 +237,7 @@ def download_files_from_oss(target_path):
     oss_dir = os.path.join(oss_dir, '.')
     logging.info('Downloading file from: {}'.format(target_path))
     los = get_local_objects(target_path)
-    ros = get_remote_objects(target_path)
+    ros = get_remote_objects(target_path, args)
     target_files = []
     for obj_key in ros['files']:
         if obj_key in los and ros['files'][obj_key] == los[obj_key]:
@@ -217,7 +248,7 @@ def download_files_from_oss(target_path):
     target_files.sort()
     for oss_path in target_files:
         local_path = os.path.join(oss_dir, oss_path)
-        download_file(oss_path, local_path)
+        download_file(oss_path, local_path, args)
     logging.info('Downloading Done\n')
 
 
@@ -264,14 +295,21 @@ def main():
         default=True,
         help='Do not upload files already in bucket other dirs'
     )
+    parser.add_argument(
+        '--bucket',
+        '-b',
+        required=True,
+        help='bucket name to store data'
+    )
     args = parser.parse_args()
     target_path = args.target_path or ''
     if args.download:
-        download_files_from_oss(target_path)
+        download_files_from_oss(target_path, args)
     else:
         upload_files_to_oss(
             target_path,
             check_duplicated=args.check_duplicated,
+            args=args,
             no=args.no,
             yes=args.yes,
         )
