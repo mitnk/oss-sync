@@ -114,7 +114,9 @@ def get_local_objects(target_path):
                 file_count += 1
     else:
         md5 = get_file_md5(oss_dir)
-        objects[target_path] = md5.upper()
+        local_path = re.sub(r'^\./', '', target_path)
+        objects[local_path] = md5.upper()
+        file_count += 1
     logging.info('local files: {}'.format(file_count))
     return objects
 
@@ -125,6 +127,8 @@ def get_remote_objects(args):
     marker = None
     file_count = 0
     prefix = args.target_path or ''
+    if prefix.startswith('./'):
+        prefix = prefix[2:]
     while True:
         result = bucket.list_objects(prefix=prefix, max_keys=100, marker=marker)
         for obj in result.object_list:
@@ -149,16 +153,18 @@ def get_remote_objects(args):
 
 def upload_file(local_path, args):
     bucket = get_bucket(args)
-    res = bucket.put_object_from_file(local_path, local_path)
+    key = re.sub(r'^\./', '', local_path)
+    res = bucket.put_object_from_file(key, local_path)
     if res.status != 200:
         logging.error('Upload {} failed. Exit.'.format(local_path))
         exit(1)
 
 
-def upload_files_to_oss(target_path, check_duplicated, args, no=None, yes=None):
+def upload_files_to_oss(args):
+    target_path = re.sub(r'^\./', '', args.target_path)
     logging.info('Uploading/Updating for: {}'.format(target_path))
     los = get_local_objects(target_path)
-    if check_duplicated:
+    if args.check_duplicated:
         ros = get_remote_objects(args)
     else:
         ros = get_remote_objects(args)
@@ -186,16 +192,16 @@ def upload_files_to_oss(target_path, check_duplicated, args, no=None, yes=None):
     index = 1
     count = len(files_need_to_update)
     for local_path, size in files_need_to_update:
-        if no:
+        if args.no:
             break
-        elif yes:
+        elif args.yes:
             upload_file(local_path, args)
             index += 1
         else:
-            print('Do you want to update {}:'.format(local_path))
+            print('Q: Do you want to update {}:'.format(local_path))
             response = input()
             while response.lower().strip() not in ('yes', 'no'):
-                print('Do you want to update {}:'.format(local_path))
+                print('Q: Do you want to update {}:'.format(local_path))
                 response = input()
             if response == 'no':
                 logging.info('skipped {} by user'.format(local_path))
@@ -244,7 +250,10 @@ def list_files_on_oss(args):
         print('- md5: {}'.format(files['meta'][o].etag))
 
 
-def download_files_from_oss(target_path, args):
+def download_files_from_oss(args):
+    target_path = args.target_path
+    if target_path.startswith('./'):
+        target_path = target_path[2:]
     if target_path.startswith('/'):
         raise ValueError('Must use relative path')
 
@@ -341,20 +350,14 @@ def main():
         required=True,
         help='bucket name to store data'
     )
+
     args = parser.parse_args()
-    target_path = args.target_path or ''
     if args.listing:
         list_files_on_oss(args)
     elif args.download:
-        download_files_from_oss(target_path, args)
+        download_files_from_oss(args)
     else:
-        upload_files_to_oss(
-            target_path,
-            check_duplicated=args.check_duplicated,
-            args=args,
-            no=args.no,
-            yes=args.yes,
-        )
+        upload_files_to_oss(args)
 
 
 if __name__ == "__main__":
