@@ -103,7 +103,7 @@ def get_local_objects(target_path):
     if os.path.isdir(oss_dir):
         for root, dirs, files in os.walk(oss_dir):
             for f in files:
-                root = re.sub(r'^\./', '', root)
+                root = re.sub(r'^\./?', '', root)
                 local_path = os.path.join(root, f)
                 if is_in_ignore_files(local_path):
                     logging.info('ignored file: {}'.format(local_path))
@@ -125,9 +125,7 @@ def get_remote_objects(args):
     bucket = get_bucket(args)
     marker = None
     file_count = 0
-    prefix = args.target_path or ''
-    if prefix.startswith('./'):
-        prefix = prefix[2:]
+    prefix = re.sub(r'^\./?', '', args.target_path or '')
     while True:
         result = bucket.list_objects(prefix=prefix, max_keys=100, marker=marker)
         for obj in result.object_list:
@@ -152,7 +150,7 @@ def get_remote_objects(args):
 
 def upload_file(local_path, args):
     bucket = get_bucket(args)
-    key = re.sub(r'^\./', '', local_path)
+    key = re.sub(r'^\./?', '', local_path)
     res = bucket.put_object_from_file(key, local_path)
     if res.status != 200:
         logging.error('Upload {} failed. Exit.'.format(local_path))
@@ -160,7 +158,7 @@ def upload_file(local_path, args):
 
 
 def upload_files_to_oss(args):
-    target_path = re.sub(r'^\./', '', args.target_path)
+    target_path = re.sub(r'^\./?', '', args.target_path)
     logging.info('Uploading/Updating for: {}'.format(target_path))
     los = get_local_objects(target_path)
     if args.check_duplicated:
