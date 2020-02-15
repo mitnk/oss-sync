@@ -7,6 +7,7 @@ import oss2  # pip install oss2
 import re
 
 logging.getLogger("requests").setLevel(logging.WARNING)
+logging.getLogger('oss2').setLevel(logging.WARNING)
 logging.basicConfig(
     level=logging.INFO,
     format='[%(asctime)s][%(levelname)s] %(message)s',
@@ -43,7 +44,7 @@ ROOT_API_KEY = os.path.join(os.getenv('HOME'), '.aliyun')
 #
 # 原地址oss.aliyuncs.com 默认指向杭州节点外网地址。
 # 原内网地址oss-internal.aliyuncs.com 默认指向杭州节点内网地址
-API_URL = 'oss-cn-beijing.aliyuncs.com'
+API_URL = 'oss-cn-hangzhou.aliyuncs.com'
 
 IGNORE_FILES = (
     '\/\..*$',
@@ -241,10 +242,52 @@ def download_file(oss_path, local_path, args):
 
 def list_files_on_oss(args):
     files = get_remote_objects(args)
+    size_total = 0
     for o in files['meta']:
-        print('\n- file: {}'.format(o))
-        print('- size: {}'.format(sizeof_fmt(files['meta'][o].size)))
-        print('- md5: {}'.format(files['meta'][o].etag))
+        size_total += files['meta'][o].size
+        if args.verbose:
+            print('\n- file: {}'.format(o))
+            print('- size: {}'.format(sizeof_fmt(files['meta'][o].size)))
+            print('- md5: {}'.format(files['meta'][o].etag))
+
+    if not args.verbose:
+        keys_to_list = list(files['files'].keys())
+        keys_to_list.sort()
+        print('== First 3 files:')
+        for x in keys_to_list[:3]:
+            print('   - {}'.format(x))
+        print('== Last 3 files:')
+        for x in keys_to_list[-3:]:
+            print('   - {}'.format(x))
+
+    print('\n== Total file count: {}'.format(len(files['files'])))
+    print('== Total size: {}'.format(sizeof_fmt(size_total)))
+
+
+def delete_files_from_oss(args):
+    files = get_remote_objects(args)
+    keys_to_delete = list(files['files'].keys())
+    keys_to_delete.sort()
+    print('== Will delete {} files:'.format(len(keys_to_delete)))
+    print('== First 3 files:')
+    for x in keys_to_delete[:3]:
+        print('   - {}'.format(x))
+    print('== Last 3 files:')
+    for x in keys_to_delete[-3:]:
+        print('   - {}'.format(x))
+
+    answer = input('== Please enter YES to delete them ALL: ')
+    if answer.strip() != 'YES':
+        print('\nAction Canceled. Files are safe. Bye.')
+        return
+
+    bucket = get_bucket(args)
+    count = 0
+    for x in keys_to_delete:
+        bucket.delete_object(x)
+        count += 1
+        print('- deleted: {}'.format(x))
+    print('\nDeleted {} files.'.format(count))
 
 
 def download_files_from_oss(args):
@@ -281,7 +324,7 @@ def main():
         action='store',
         const=None,
         default=None,
-        help='Target path to sync files'
+        help='Target path to sync/delete files'
     )
     parser.add_argument(
         '--download',
@@ -345,7 +388,18 @@ def main():
         '--bucket',
         '-b',
         required=True,
-        help='bucket name to store data'
+        help='bucket name to store data',
+    )
+    parser.add_argument(
+        '--delete',
+        action='store_true',
+        help='To delete files with prefix from OSS',
+    )
+    parser.add_argument(
+        '--verbose',
+        '-v',
+        action='store_true',
+        help='Print more info',
     )
 
     args = parser.parse_args()
@@ -353,6 +407,8 @@ def main():
         list_files_on_oss(args)
     elif args.download:
         download_files_from_oss(args)
+    elif args.delete:
+        delete_files_from_oss(args)
     else:
         upload_files_to_oss(args)
 
